@@ -402,6 +402,7 @@ my (
     $opt_diff_alignment       ,
     $opt_diff_timeout         ,
     $opt_html                 ,
+    $opt_comments             ,
     $opt_ignored              ,
     $opt_counted              ,
     $opt_show_ext             ,
@@ -465,6 +466,7 @@ my $getopt_success = GetOptions(
    "by_file_by_lang|by-file-by-lang"         => \$opt_by_file_by_lang     ,
    "categorized=s"                           => \$opt_categorized         ,
    "counted=s"                               => \$opt_counted             ,
+   "comments"                                => \$opt_comments            ,
    "exclude_lang|exclude-lang=s"             => \$opt_exclude_lang        ,
    "exclude_dir|exclude-dir=s"               => \$opt_exclude_dir         ,
    "exclude_list_file|exclude-list-file=s"   => \$opt_exclude_list_file   ,
@@ -3486,6 +3488,39 @@ sub call_counter {                           # {{{1
                    \@diff_L, \@diff_R,          ,   # out
                     $ra_Errors);                    # in/out
         write_comments_to_html($file, \@diff_L, \@diff_R, \%blank_line);
+#print Dumper("count", \%count);
+    }
+
+    if ($opt_comments and !$opt_diff) {
+        chomp(@original_lines);  # includes blank lines, comments
+        chomp(@lines);           # no blank lines, no comments
+
+        my (@diff_L, @diff_R, %count);
+
+        # remove blank lines to get better quality diffs; count
+        # blank lines separately
+        my @original_lines_minus_white = ();
+        # however must keep track of how many blank lines were removed and
+        # where they were removed so that the HTML display can include it
+        my %blank_line  = ();
+        my $insert_line = 0;
+        foreach (@original_lines) {
+            if (/^\s*$/) {
+               ++$count{blank}{same};
+               ++$blank_line{ $insert_line };
+            } else {
+                ++$insert_line;
+                push @original_lines_minus_white, $_;
+            }
+        }
+
+        array_diff( $file                       ,   # in
+                   \@original_lines_minus_white ,   # in
+                   \@lines                      ,   # in
+                   "comment"                    ,   # in
+                   \@diff_L, \@diff_R,          ,   # out
+                    $ra_Errors);                    # in/out
+        write_comments_to_text($file, \@diff_L, \@diff_R, \%blank_line);
 #print Dumper("count", \%count);
     }
 
@@ -8126,6 +8161,67 @@ my $BB = chr(27) . "[1m";  # bold
 #       printf "DIFF:  %s  %s  %s\n", @{$entry};
 #   }
 } # 1}}}
+
+sub write_comments_to_text {                 # {{{1
+    my ($filename      , # in
+        $rah_diff_L    , # in  see routine array_diff() for explanation
+        $rah_diff_R    , # in  see routine array_diff() for explanation
+        $rh_blank      , # in  location and counts of blank lines
+       ) = @_;
+
+    print "-> write_comments_to_text($filename)\n" if $opt_v > 2;
+    my $file = $filename . ".txt";
+
+    my $OUT = new IO::File $file, "w";
+    if (!defined $OUT) {
+        warn "Unable to write to $file\n";
+        print "<- write_comments_to_text\n" if $opt_v > 2;
+        return;
+    }
+
+    my $approx_line_count = scalar @{$rah_diff_L};
+    my $n_digits = 1 + int(log($approx_line_count)/2.30258509299405); # log_10
+
+    my $file_out = "";
+
+    my $comment_line_number = 0;
+    for (my $i = 0; $i < scalar @{$rah_diff_R}; $i++) {
+        if (defined $rh_blank->{$i}) {
+            foreach (1..$rh_blank->{$i}) {
+		next;
+            }
+        }
+        my $line_num = "";
+        my $pre      = "";
+        my $post     = "";
+warn "undef rah_diff_R[$i]{type} " unless defined $rah_diff_R->[$i]{type};
+        if ($rah_diff_R->[$i]{type} eq 'nonexist') {
+            ++$comment_line_number;
+            $file_out .= $rah_diff_L->[$i]{char} . 
+                         $post . "\n";
+            next;
+        }
+        if      ($rah_diff_R->[$i]{type} eq 'code' and
+                 $rah_diff_R->[$i]{desc} eq 'same') {
+	    # Skip all code
+	    next;
+        } elsif ($rah_diff_R->[$i]{type} eq 'comment') {
+            $line_num = $comment_line_number . $post;
+            $file_out .= $rah_diff_R->[$i]{char} . $post;
+        }
+        $file_out .= "\n";
+    }
+
+    my $out_file = "$filename.txt";
+    open  OUT, ">$out_file" or die "Cannot write to $out_file $!\n";
+    print OUT $file_out;
+    close OUT;
+    print "Wrote $out_file\n" unless $opt_quiet;
+    $OUT->close;
+
+    print "<- write_comments_to_text\n" if $opt_v > 2;
+} # 1}}}
+
 sub write_comments_to_html {                 # {{{1
     my ($filename      , # in
         $rah_diff_L    , # in  see routine array_diff() for explanation
